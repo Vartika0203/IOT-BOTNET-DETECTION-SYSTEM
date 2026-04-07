@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IoT Botnet Detection Dashboard</title>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #fff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        h1 { text-align: center; margin-bottom: 10px; }
+        .subtitle { text-align: center; color: #aaa; margin-bottom: 30px; }
+        
+        .stats-container {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-card {
+            background: rgba(255,255,255,0.1);
+            border-radius: 15px;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .stat-value { font-size: 36px; font-weight: bold; color: #00ff88; }
+        .stat-label { font-size: 14px; color: #aaa; margin-top: 5px; }
+        
+        .graph-container {
+            background: rgba(0,0,0,0.3);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        #graphCanvas {
+            width: 100%;
+            height: 200px;
+            background: rgba(0,0,0,0.5);
+            border-radius: 10px;
+            margin-top: 10px;
+            position: relative;
+        }
+        
+        .bar {
+            position: absolute;
+            bottom: 0;
+            width: 30px;
+            background: #00ff88;
+            border-radius: 5px 5px 0 0;
+            transition: height 0.3s;
+        }
+        
+        .bar.attack { background: #ff4444; }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+        
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 14px;
+            transition: transform 0.2s;
+        }
+        
+        button:hover { transform: scale(1.05); }
+        .btn-recon { background: #ff6600; color: white; }
+        .btn-cc { background: #ff4444; color: white; }
+        .btn-ddos { background: #cc0000; color: white; }
+        .btn-stop { background: #333; color: white; }
+        .btn-reset { background: #444; color: white; }
+        
+        .alerts-container {
+            background: rgba(0,0,0,0.3);
+            border-radius: 15px;
+            padding: 20px;
+            margin-top: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .alert-item {
+            background: rgba(255,0,0,0.2);
+            border-left: 4px solid #ff4444;
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+        }
+        
+        .alert-time { font-size: 11px; color: #888; }
+        .alert-message { font-weight: bold; margin: 5px 0; }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .status-normal { background: #00aa44; }
+        .status-attack { background: #ff4444; animation: pulse 1s infinite; }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        
+        .attack-stats {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .attack-stat {
+            text-align: center;
+            padding: 15px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 10px;
+            flex: 1;
+        }
+        
+        .connection-status {
+            position: fixed;
+            bottom: 10px;
+            right: 10px;
+            padding: 5px 10px;
+            border-radius: 5px;
+            background: #333;
+            font-size: 11px;
+        }
+        
+        .connected { color: #00ff88; }
+        .disconnected { color: #ff4444; }
+        
+        .packet-counter {
+            font-size: 14px;
+            color: #00ff88;
+            margin-top: 10px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <h1>🛡️ IoT Botnet Detection System</h1>
+    <div class="subtitle">Real-time ML-based Intrusion Detection | Live Dashboard</div>
+    
+    <div class="stats-container">
+        <div class="stat-card">
+            <div class="stat-value" id="totalPackets">0</div>
+            <div class="stat-label">Total Packets</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="normalPercent">0%</div>
+            <div class="stat-label">Normal Traffic</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="attackPercent">0%</div>
+            <div class="stat-label">Attack Traffic</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="currentStatus">Normal</div>
+            <div class="stat-label">Current Status</div>
+        </div>
+    </div>
+    
+    <div class="graph-container">
+        <h3>📊 Real-Time Traffic (Packets per Second)</h3>
+        <div id="graphCanvas" style="position: relative; height: 200px;"></div>
+        <div class="packet-counter" id="livePPS">Waiting for data...</div>
+    </div>
+    
+    <div class="controls">
+        <button class="btn-recon" onclick="startAttack('recon')">🔍 Start Reconnaissance Attack</button>
+        <button class="btn-cc" onclick="startAttack('cc')">💀 Start C&C Attack</button>
+        <button class="btn-ddos" onclick="startAttack('ddos')">🌊 Start DDoS Attack</button>
+        <button class="btn-stop" onclick="stopAttack()">⏹️ Stop Attack</button>
+        <button class="btn-reset" onclick="resetStats()">🔄 Reset Statistics</button>
+    </div>
+    
+    <div class="attack-stats">
+        <div class="attack-stat">
+            <div>🔍 Reconnaissance</div>
+            <div style="font-size: 24px; font-weight: bold; color: #ff6600;" id="reconCount">0</div>
+        </div>
+        <div class="attack-stat">
+            <div>💀 C&C Communication</div>
+            <div style="font-size: 24px; font-weight: bold; color: #ff4444;" id="ccCount">0</div>
+        </div>
+        <div class="attack-stat">
+            <div>🌊 DDoS</div>
+            <div style="font-size: 24px; font-weight: bold; color: #cc0000;" id="ddosCount">0</div>
+        </div>
+    </div>
+    
+    <div class="alerts-container">
+        <h3>🚨 Real-Time Alerts</h3>
+        <div id="alertsList">
+            <div style="text-align: center; color: #aaa; padding: 20px;">No alerts yet</div>
+        </div>
+    </div>
+    
+    <div class="connection-status">
+        Status: <span id="connStatus" class="disconnected">Connecting...</span>
+    </div>
+    
+    <script>
+        const SERVER_URL = window.location.origin;
+        console.log('Connecting to:', SERVER_URL);
+        
+        let socket = io(SERVER_URL, {
+            transports: ['websocket', 'polling'],
+            reconnection: true
+        });
+        
+        socket.on('connect', function() {
+            console.log('✅ Connected to server');
+            document.getElementById('connStatus').innerHTML = 'Connected ✅';
+            document.getElementById('connStatus').className = 'connected';
+        });
+        
+        socket.on('disconnect', function() {
+            console.log('❌ Disconnected');
+            document.getElementById('connStatus').innerHTML = 'Disconnected ❌';
+            document.getElementById('connStatus').className = 'disconnected';
+        });
+        
+        let trafficHistory = [];
+        
+        function updateGraph(pps, status, timestamp) {
+            // Update live PPS display
+            document.getElementById('livePPS').innerHTML = `📡 Current Traffic: ${pps} packets/sec`;
+            
+            // Add to history
+            trafficHistory.push({pps: pps, status: status, timestamp: timestamp});
+            if (trafficHistory.length > 20) trafficHistory.shift();
+            
+            // Draw graph
+            const graphDiv = document.getElementById('graphCanvas');
+            graphDiv.innerHTML = '';
+            
+            const maxPps = Math.max(...trafficHistory.map(d => d.pps), 100);
+            
+            trafficHistory.forEach((data, index) => {
+                const height = (data.pps / maxPps) * 180;
+                const bar = document.createElement('div');
+                bar.className = 'bar';
+                if (data.status === 'attack') bar.classList.add('attack');
+                bar.style.height = Math.max(height, 5) + 'px';
+                bar.style.left = (index * 38) + 'px';
+                bar.style.position = 'absolute';
+                bar.style.bottom = '0';
+                bar.style.width = '30px';
+                graphDiv.appendChild(bar);
+            });
+        }
+        
+        socket.on('traffic_update', function(data) {
+            console.log('📊 Traffic update received:', data);
+            updateGraph(data.pps, data.status, data.timestamp);
+            
+            // Update status badge
+            if (data.status === 'attack') {
+                document.getElementById('currentStatus').innerHTML = '<span class="status-badge status-attack">⚠️ ATTACK DETECTED</span>';
+            } else {
+                document.getElementById('currentStatus').innerHTML = '<span class="status-badge status-normal">✓ NORMAL</span>';
+            }
+        });
+        
+        socket.on('stats_update', function(data) {
+            console.log('📈 Stats update:', data);
+            document.getElementById('totalPackets').innerText = data.total_packets.toLocaleString();
+            document.getElementById('normalPercent').innerText = data.normal_percent.toFixed(1) + '%';
+            document.getElementById('attackPercent').innerText = data.attack_percent.toFixed(1) + '%';
+            document.getElementById('reconCount').innerText = data.recon_count.toLocaleString();
+            document.getElementById('ccCount').innerText = data.cc_count.toLocaleString();
+            document.getElementById('ddosCount').innerText = data.ddos_count.toLocaleString();
+        });
+        
+        socket.on('new_alert', function(alert) {
+            console.log('🚨 ALERT received:', alert);
+            const alertsDiv = document.getElementById('alertsList');
+            
+            const alertHtml = `
+                <div class="alert-item">
+                    <div class="alert-time">⏰ ${alert.timestamp}</div>
+                    <div class="alert-message">🚨 ${alert.message}</div>
+                    <div class="alert-time">Confidence: ${(alert.confidence * 100).toFixed(1)}% | Type: ${alert.attack_type}</div>
+                </div>
+            `;
+            
+            if (alertsDiv.innerHTML.includes('No alerts yet')) {
+                alertsDiv.innerHTML = alertHtml;
+            } else {
+                alertsDiv.innerHTML = alertHtml + alertsDiv.innerHTML;
+            }
+        });
+        
+        function startAttack(type) {
+            console.log('🎮 Starting attack:', type);
+            fetch(`${SERVER_URL}/api/start_attack/${type}`)
+                .then(response => response.json())
+                .then(data => console.log('Attack started:', data))
+                .catch(err => console.error('Error:', err));
+        }
+        
+        function stopAttack() {
+            console.log('🎮 Stopping attack');
+            fetch(`${SERVER_URL}/api/stop_attack`)
+                .then(response => response.json())
+                .then(data => console.log('Attack stopped:', data))
+                .catch(err => console.error('Error:', err));
+        }
+        
+        function resetStats() {
+            console.log('🎮 Resetting stats');
+            fetch(`${SERVER_URL}/api/reset_stats`)
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Stats reset:', data);
+                    document.getElementById('alertsList').innerHTML = '<div style="text-align: center; color: #aaa; padding: 20px;">No alerts yet</div>';
+                    trafficHistory = [];
+                    document.getElementById('graphCanvas').innerHTML = '';
+                    document.getElementById('livePPS').innerHTML = 'Waiting for data...';
+                })
+                .catch(err => console.error('Error:', err));
+        }
+        
+        // Test connection and load initial data
+        fetch(`${SERVER_URL}/api/stats`)
+            .then(response => response.json())
+            .then(data => {
+                console.log('Initial data loaded:', data);
+                if (data.traffic_history && data.traffic_history.length > 0) {
+                    data.traffic_history.forEach(point => {
+                        updateGraph(point.pps, point.status, point.timestamp);
+                    });
+                }
+            })
+            .catch(err => console.error('Error loading initial data:', err));
+        
+        // Also check if we're receiving any data
+        setInterval(() => {
+            console.log('Checking connection... Socket connected:', socket.connected);
+        }, 5000);
+    </script>
+</body>
+</html>
